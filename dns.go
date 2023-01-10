@@ -28,7 +28,7 @@ var currentPhysicalZoneId = ""
 
 func init() {
 	flag.StringVar(&dnsServer, "dns-server", "169.254.169.253:53", "DNS resolver to use")
-	flag.StringVar(&listenAddr, "listen-addr", "127.0.0.1:3333", "DNS server listen address")
+	flag.StringVar(&listenAddr, "listen-addr", "127.0.0.1:53", "DNS server listen address")
 	flag.Parse()
 }
 
