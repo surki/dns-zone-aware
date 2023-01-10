@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -11,6 +12,8 @@ func (h *handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	h.log.Info("received dns request", "req", r)
 
 	// TODO: handle multiple questions?
+	// Not handling it right now as most of the DNS resolver handles only first question and typeA is our only use case now.
+	// Even with multiple DNS questions, the resulting MsgHdr has only global Rcode not for each Question.
 	switch r.Question[0].Qtype {
 	case dns.TypeA:
 		h.log.Info("handling A question", "domain", r.Question[0].Name)
@@ -41,12 +44,12 @@ func (h *handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
-	h.log.Info("forwarding request", "resolver", dnsServer)
+	h.log.Info("forwarding request", "resolver", inputConfig.dnsServer)
 
 	dnsClient := h.dnsClient
 
 	for _, name := range names {
-		retried := false
+		attempt := 1
 
 	Redo:
 		dnsRequest := new(dns.Msg)
@@ -54,21 +57,24 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 		dnsRequest.SetEdns0(4096, true)
 
 		h.log.Info("doing dns lookup", "req", dnsRequest)
-		ans, rtt, err := dnsClient.Exchange(dnsRequest, dnsServer)
+		ans, rtt, err := dnsClient.Exchange(dnsRequest, inputConfig.dnsServer)
 		if err != nil {
-			if !retried {
-				// Add backoff
-				retried = true
+			if inputConfig.MaxRetries >= attempt {
+				backOffTime := h.backoff.Next(attempt)
+				time.Sleep(backOffTime)
+				h.log.Info(fmt.Sprintf("Received Error: %v. Retrying dns lookup. Attempt: %v after %v", err, attempt, backOffTime))
+				attempt++
 				goto Redo
 			}
 			h.log.Error(err, "cannot resolve dns", "dns-request", dnsRequest)
 			return nil, err
 		}
 		if ans.MsgHdr.Truncated {
-			if !retried {
-				retried = true
+			if inputConfig.MaxRetries >= attempt {
 				dnsClient = new(dns.Client)
 				dnsClient.Net = "tcp"
+				h.log.Info(fmt.Sprintf("Received Truncated response. Retrying dns lookup. Attempt: %v", attempt))
+				attempt++
 				goto Redo
 			}
 		}

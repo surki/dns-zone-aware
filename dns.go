@@ -9,11 +9,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"github.com/mattn/go-isatty"
 	"github.com/miekg/dns"
+	"github.com/surki/dns-zone-aware/internal"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -21,19 +23,39 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 )
 
-var dnsServer string
-var listenAddr string
+type Config struct {
+	dnsServer             string
+	listenAddr            string
+	dnsServerTimeout      int64
+	BackOffStrategy       string
+	BackOffMaxJitter      int64
+	BackOffInterval       int64
+	BackOffMaxTimeout     float64
+	BackOffInitialTimeout float64
+	BackOffExponentFactor float64
+	MaxRetries            int
+}
+
+var inputConfig Config
 
 var currentPhysicalZoneId = ""
 
 func init() {
-	flag.StringVar(&dnsServer, "dns-server", "169.254.169.253:53", "DNS resolver to use")
-	flag.StringVar(&listenAddr, "listen-addr", "127.0.0.1:3333", "DNS server listen address")
+	inputConfig = Config{}
+	flag.StringVar(&inputConfig.dnsServer, "dns-server", "169.254.169.253:53", "DNS resolver to use")
+	flag.StringVar(&inputConfig.listenAddr, "listen-addr", "127.0.0.1:53", "DNS server listen address")
+	inputConfig.dnsServerTimeout = *flag.Int64("dns-server.timeoutMillis", 5000, "Timeout for DNS server")
+	flag.StringVar(&inputConfig.BackOffStrategy, "dns-server.backoff-strategy", "exponential", "Backoff Strategy to use when request to DNS Server are retried. exponential or constant")
+	inputConfig.BackOffMaxJitter = *flag.Int64("dns-server.backoff-maxjitter", 10, "Jitter for BackOff computation")
+	inputConfig.BackOffInterval = *flag.Int64("dns-server.backoff-interval", 100, "Interval for Constant BackOff computation")
+	inputConfig.BackOffMaxTimeout = *flag.Float64("dns-server.backoff-maxtimeout", 1000, "Max Timeout for Exponential BackOff computation")
+	inputConfig.BackOffInitialTimeout = *flag.Float64("dns-server.backoff-initialtimeout", 100, "Initial Timeout for Exponential BackOff computation")
+	inputConfig.BackOffExponentFactor = *flag.Float64("dns-server.backoff-expfactor", 2, "Factor for Exponential BackOff computation")
+	inputConfig.MaxRetries = *flag.Int("dns-server.retries", 3, "No of Retries for DNS server")
 	flag.Parse()
 }
 
 func main() {
-	flag.Parse()
 
 	l := getLogger()
 	log := zapr.NewLogger(l)
@@ -45,7 +67,7 @@ func main() {
 		cancel()
 	}()
 
-	log.Info("starting", "addr", listenAddr)
+	log.Info("starting", "addr", inputConfig.listenAddr)
 
 	em := ec2metadata.New(session.Must(session.NewSession()))
 	zoneid, err := em.GetMetadataWithContext(ctx, "placement/availability-zone-id")
@@ -59,16 +81,17 @@ func main() {
 	var wg sync.WaitGroup
 
 	h := &handler{
-		ctx:       ctx,
-		log:       log,
+		ctx: ctx,
+		log: log,
 		dnsClient: &dns.Client{
-			//TODO: configure timeouts etc
+			Timeout: time.Duration(time.Duration(inputConfig.dnsServerTimeout).Milliseconds()),
 		},
+		backoff: initBackOffStrategy(),
 	}
 
 	// TCP
 	tcpSrv := &dns.Server{
-		Addr:    listenAddr,
+		Addr:    inputConfig.listenAddr,
 		Net:     "tcp",
 		Handler: h,
 	}
@@ -83,7 +106,7 @@ func main() {
 
 	// UDP
 	udpSrv := &dns.Server{
-		Addr:    listenAddr,
+		Addr:    inputConfig.listenAddr,
 		Net:     "udp",
 		Handler: h,
 	}
@@ -117,6 +140,23 @@ type handler struct {
 	ctx       context.Context
 	log       logr.Logger
 	dnsClient *dns.Client
+	backoff   internal.Backoff
+}
+
+func initBackOffStrategy() internal.Backoff {
+	switch inputConfig.BackOffStrategy {
+	case "exponential":
+		return internal.NewExponentialBackoff(time.Duration(inputConfig.BackOffInitialTimeout*float64(time.Millisecond)),
+			time.Duration(inputConfig.BackOffMaxTimeout*float64(time.Millisecond)),
+			inputConfig.BackOffExponentFactor,
+			time.Duration(inputConfig.BackOffMaxJitter*int64(time.Millisecond)))
+	case "constant":
+		return internal.NewConstantBackoff(time.Duration(inputConfig.BackOffInterval*int64(time.Millisecond)),
+			time.Duration(inputConfig.BackOffMaxJitter*int64(time.Millisecond)))
+	default:
+		return internal.NewConstantBackoff(time.Duration(inputConfig.BackOffInterval*int64(time.Millisecond)),
+			time.Duration(inputConfig.BackOffMaxJitter*int64(time.Millisecond)))
+	}
 }
 
 func getLogger() *zap.Logger {
