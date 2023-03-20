@@ -73,7 +73,7 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 			if inputConfig.MaxRetries >= attempt {
 				dnsClient = new(dns.Client)
 				dnsClient.Net = "tcp"
-				h.log.Info(fmt.Sprintf("Received Truncated response. Retrying dns lookup. Attempt: %v after %v", attempt, backOffTime))
+				h.log.Info(fmt.Sprintf("Received Truncated response. Retrying dns lookup. Attempt: %v", attempt))
 				attempt++
 				goto Redo
 			}
