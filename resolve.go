@@ -71,8 +71,6 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 		}
 		if ans.MsgHdr.Truncated {
 			if inputConfig.MaxRetries >= attempt {
-				backOffTime := h.backoff.Next(attempt)
-				time.Sleep(backOffTime)
 				dnsClient = new(dns.Client)
 				dnsClient.Net = "tcp"
 				h.log.Info(fmt.Sprintf("Received Truncated response. Retrying dns lookup. Attempt: %v after %v", attempt, backOffTime))
