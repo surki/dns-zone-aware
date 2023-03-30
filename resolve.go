@@ -79,6 +79,11 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 			}
 		}
 
+		if len(ans.Answer) == 0 {
+			h.log.Info("lookup failed with no answers, ignoring this domain", "domain", name)
+			continue
+		}
+
 		h.log.Info("dns lookup finished", "ans-rcode", ans.MsgHdr.Rcode, "resp-time", rtt)
 
 		switch ans.MsgHdr.Rcode {
@@ -109,5 +114,5 @@ func (h *handler) dnsNamesToUse(s string) []string {
 		s = s + "."
 	}
 
-	return []string{currentPhysicalZoneId + "." + s, s}
+	return []string{currentPhysicalZoneId + inputConfig.prefixSeparator + s, s}
 }

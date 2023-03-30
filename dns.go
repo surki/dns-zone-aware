@@ -26,6 +26,7 @@ import (
 type Config struct {
 	dnsServer             string
 	listenAddr            string
+	prefixSeparator       string
 	dnsServerTimeout      int64
 	BackOffStrategy       string
 	BackOffMaxJitter      int64
@@ -44,6 +45,7 @@ func init() {
 	inputConfig = Config{}
 	flag.StringVar(&inputConfig.dnsServer, "dns-server", "169.254.169.253:53", "DNS resolver to use")
 	flag.StringVar(&inputConfig.listenAddr, "listen-addr", "127.0.0.1:53", "DNS server listen address")
+
 	inputConfig.dnsServerTimeout = *flag.Int64("dns-server.timeoutMillis", 5000, "Timeout for DNS server")
 	flag.StringVar(&inputConfig.BackOffStrategy, "dns-server.backoff-strategy", "exponential", "Backoff Strategy to use when request to DNS Server are retried. exponential or constant")
 	inputConfig.BackOffMaxJitter = *flag.Int64("dns-server.backoff-maxjitter", 10, "Jitter for BackOff computation")
@@ -52,6 +54,7 @@ func init() {
 	inputConfig.BackOffInitialTimeout = *flag.Float64("dns-server.backoff-initialtimeout", 100, "Initial Timeout for Exponential BackOff computation")
 	inputConfig.BackOffExponentFactor = *flag.Float64("dns-server.backoff-expfactor", 2, "Factor for Exponential BackOff computation")
 	inputConfig.MaxRetries = *flag.Int("dns-server.retries", 3, "No of Retries for DNS server")
+	flag.StringVar(&inputConfig.prefixSeparator, "dns-server.prefix-separator", ".", "Separator to use when prefixing the zoneid to DNS")
 	flag.Parse()
 }
 
