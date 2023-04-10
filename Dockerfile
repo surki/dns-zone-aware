@@ -14,6 +14,7 @@ RUN go mod download
 # Copy the go source
 COPY dns.go dns.go
 COPY resolve.go resolve.go
+COPY internal/ internal/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o dns-aware-resolver
