@@ -17,13 +17,13 @@ COPY resolve.go resolve.go
 COPY internal/ internal/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o dns-aware-resolver
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o dns-zone-aware-resolver
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /workspace/dns-aware-resolver .
+COPY --from=builder /workspace/dns-zone-aware-resolver .
 USER nonroot:nonroot
 
-ENTRYPOINT ["/dns-aware-resolver"]
+ENTRYPOINT ["/dns-zone-aware-resolver"]
