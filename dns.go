@@ -172,11 +172,13 @@ func initBackOffStrategy() internal.Backoff {
 func resolveDnsServerAddress(log logr.Logger) string {
 	if inputConfig.useKubeDnsServer {
 		ip, err := findKubeDnsServerIp(log)
-		if err == nil {
-			return ip
+		if err != nil {
+			log.Error(err, "Falling back to dnsServer from config", "dnsServer", inputConfig.dnsServer)
+			return inputConfig.dnsServer
 		}
+		return ip
 	}
-	log.Info("Falling back to dnsServer from config", "dnsServer", inputConfig.dnsServer)
+	log.Info("Using dnsServer from config", "dnsServer", inputConfig.dnsServer)
 	return inputConfig.dnsServer
 }
 
@@ -184,21 +186,17 @@ func resolveDnsServerAddress(log logr.Logger) string {
 func findKubeDnsServerIp(log logr.Logger) (string, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Error(err, "cannot create kubernetes client config")
-		return "", err
+		return "", errors.New("cannot create kubernetes client config")
 	}
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Error(err, "cannot create kubernetes client")
-		return "", err
+		return "", errors.New("cannot create kubernetes client")
 	}
 	svc, err := clientset.CoreV1().Services("kube-system").Get(context.Background(), "kube-dns", v1.GetOptions{})
 	if err != nil {
-		log.Error(err, "cannot find kube-dns service")
-		return "", err
+		return "", errors.New("cannot find kube-dns service")
 	}
 	if svc.Spec.ClusterIP == "" {
-		log.Error(err, "kube-dns service does not have a cluster ip")
 		return "", errors.New("kube-dns service does not have a cluster ip")
 	}
 	return svc.Spec.ClusterIP + ":53", nil
