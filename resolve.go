@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -44,11 +45,12 @@ func (h *handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
-	h.log.Info("forwarding request", "resolver", inputConfig.dnsServer)
 
 	dnsClient := h.dnsClient
+	dnsServer := h.dnsServer
 
 	for _, name := range names {
+		h.log.Info("forwarding request", "resolver", dnsServer)
 		attempt := 1
 
 	Redo:
@@ -57,12 +59,16 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 		dnsRequest.SetEdns0(4096, true)
 
 		h.log.Info("doing dns lookup", "req", dnsRequest)
-		ans, rtt, err := dnsClient.Exchange(dnsRequest, inputConfig.dnsServer)
+		ans, rtt, err := dnsClient.Exchange(dnsRequest, dnsServer)
 		if err != nil {
 			if inputConfig.MaxRetries >= attempt {
 				backOffTime := h.backoff.Next(attempt)
 				time.Sleep(backOffTime)
 				h.log.Info(fmt.Sprintf("Received Error: %v. Retrying dns lookup. Attempt: %v after %v", err, attempt, backOffTime))
+				// if it is a dial error, reset dnsServer to inputConfig.dnsServer
+				if _, ok := err.(*net.OpError); ok {
+					dnsServer = inputConfig.dnsServer
+				}
 				attempt++
 				goto Redo
 			}
@@ -77,6 +83,11 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 				attempt++
 				goto Redo
 			}
+		}
+
+		if len(ans.Answer) == 0 {
+			h.log.Info("lookup failed with no answers, ignoring this domain", "domain", name)
+			continue
 		}
 
 		h.log.Info("dns lookup finished", "ans-rcode", ans.MsgHdr.Rcode, "resp-time", rtt)
@@ -109,5 +120,5 @@ func (h *handler) dnsNamesToUse(s string) []string {
 		s = s + "."
 	}
 
-	return []string{currentPhysicalZoneId + "." + s, s}
+	return []string{currentPhysicalZoneId + inputConfig.prefixSeparator + s, s}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +19,9 @@ import (
 	"github.com/surki/dns-zone-aware/internal"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -26,6 +30,8 @@ import (
 type Config struct {
 	dnsServer             string
 	listenAddr            string
+	prefixSeparator       string
+	useKubeDnsServer      bool
 	dnsServerTimeout      int64
 	BackOffStrategy       string
 	BackOffMaxJitter      int64
@@ -52,6 +58,8 @@ func init() {
 	inputConfig.BackOffInitialTimeout = *flag.Float64("dns-server.backoff-initialtimeout", 100, "Initial Timeout for Exponential BackOff computation")
 	inputConfig.BackOffExponentFactor = *flag.Float64("dns-server.backoff-expfactor", 2, "Factor for Exponential BackOff computation")
 	inputConfig.MaxRetries = *flag.Int("dns-server.retries", 3, "No of Retries for DNS server")
+	flag.StringVar(&inputConfig.prefixSeparator, "dns-server.prefix-separator", ".", "Separator to use when prefixing the zoneid to DNS")
+	flag.BoolVar(&inputConfig.useKubeDnsServer, "dns-server.use-kube-dns", false, "Use the KubeDNS server to resolve the DNS queries")
 	flag.Parse()
 }
 
@@ -86,7 +94,8 @@ func main() {
 		dnsClient: &dns.Client{
 			Timeout: time.Duration(time.Duration(inputConfig.dnsServerTimeout).Milliseconds()),
 		},
-		backoff: initBackOffStrategy(),
+		backoff:   initBackOffStrategy(),
+		dnsServer: resolveDnsServerAddress(log),
 	}
 
 	// TCP
@@ -140,6 +149,7 @@ type handler struct {
 	ctx       context.Context
 	log       logr.Logger
 	dnsClient *dns.Client
+	dnsServer string
 	backoff   internal.Backoff
 }
 
@@ -159,6 +169,39 @@ func initBackOffStrategy() internal.Backoff {
 	}
 }
 
+func resolveDnsServerAddress(log logr.Logger) string {
+	if inputConfig.useKubeDnsServer {
+		ip, err := findKubeDnsServerIp(log)
+		if err != nil {
+			log.Error(err, "Falling back to dnsServer from config", "dnsServer", inputConfig.dnsServer)
+			return inputConfig.dnsServer
+		}
+		return ip
+	}
+	log.Info("Using dnsServer from config", "dnsServer", inputConfig.dnsServer)
+	return inputConfig.dnsServer
+}
+
+// Kubernetes Client in cluster call to fetch the DNS service ip and return err
+func findKubeDnsServerIp(log logr.Logger) (string, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return "", errors.New("cannot create kubernetes client config")
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return "", errors.New("cannot create kubernetes client")
+	}
+	svc, err := clientset.CoreV1().Services("kube-system").Get(context.Background(), "kube-dns", v1.GetOptions{})
+	if err != nil {
+		return "", errors.New("cannot find kube-dns service")
+	}
+	if svc.Spec.ClusterIP == "" {
+		return "", errors.New("kube-dns service does not have a cluster ip")
+	}
+	return svc.Spec.ClusterIP + ":53", nil
+
+}
 func getLogger() *zap.Logger {
 	config := zap.NewDevelopmentConfig()
 	config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
