@@ -52,7 +52,6 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 	for _, name := range names {
 		h.log.Info("forwarding request", "resolver", dnsServer)
 		attempt := 1
-		resolveDnsServerOnce := false
 
 	Redo:
 		dnsRequest := new(dns.Msg)
@@ -62,13 +61,6 @@ func (h *handler) resolveDnsNames(names []string) (*dns.Msg, error) {
 		h.log.Info("doing dns lookup", "req", dnsRequest)
 		ans, rtt, err := dnsClient.Exchange(dnsRequest, dnsServer)
 		if err != nil {
-			// if it is a dial error, retry after resolving dns server again
-			if _, ok := err.(*net.OpError); ok && !resolveDnsServerOnce {
-				h.log.Info(fmt.Sprintf("Received Dial Error: %v. Resolved DNS Server Again and Retrying dns lookup. Attempt: %v", err, attempt))
-				dnsServer = resolveDnsServerAddress(h.log)
-				resolveDnsServerOnce = true
-				goto Redo
-			}
 			if inputConfig.MaxRetries >= attempt {
 				backOffTime := h.backoff.Next(attempt)
 				time.Sleep(backOffTime)
